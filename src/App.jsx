@@ -28,6 +28,7 @@ function App() {
   const metronomeContextRef = useRef(null)
   const metronomeIntervalRef = useRef(null)
   const beatRef = useRef(0)
+  const metronomeWasPlayingRef = useRef(false)
 
   const [tapTimes, setTapTimes] = useState([])
 
@@ -89,15 +90,17 @@ function App() {
     }
   }
 
-  const startMetronome = useEffectEvent(async () => {
+  const startMetronome = useEffectEvent(async (fireImmediately = false) => {
     clearMetronome()
 
     const context = metronomeContextRef.current ?? new AudioContext()
     metronomeContextRef.current = context
     await context.resume()
 
-    beatRef.current = 0
-    playMetronomeClick(context, metronomeVolume, true)
+    if (fireImmediately) {
+      beatRef.current = 0
+      playMetronomeClick(context, metronomeVolume, true)
+    }
     const intervalMs = 60000 / metronomeBpm
 
     metronomeIntervalRef.current = window.setInterval(() => {
@@ -251,19 +254,16 @@ function App() {
       const gain = context.createGain()
       const filter = context.createBiquadFilter()
       const output = context.createGain()
-      const instrumentHarmonics =
-        instrument === 'bass'
-          ? [0, 1, 0.48, 0.2, 0.1, 0.06, 0.03]
-          : [0, 1, 0.62, 0.31, 0.16, 0.09, 0.05]
+      const toneProfile = getReferenceToneProfile(item, instrument)
 
-      oscillator.setPeriodicWave(createHarmonicWave(context, instrumentHarmonics))
+      oscillator.setPeriodicWave(createHarmonicWave(context, toneProfile.harmonics))
       oscillator.frequency.value = item.frequency
       filter.type = 'lowpass'
-      filter.frequency.value = instrument === 'bass' ? 1400 : 2200
-      filter.Q.value = 0.8
-      gain.gain.value = instrument === 'bass' ? 0.95 : 0.8
+      filter.frequency.value = toneProfile.filterFrequency
+      filter.Q.value = toneProfile.filterQ
+      gain.gain.value = toneProfile.filterGain
       output.gain.setValueAtTime(0.0001, context.currentTime)
-      output.gain.exponentialRampToValueAtTime(0.085, context.currentTime + 0.04)
+      output.gain.exponentialRampToValueAtTime(toneProfile.outputGain, context.currentTime + 0.04)
 
       oscillator.connect(filter)
       filter.connect(gain)
@@ -381,10 +381,13 @@ function App() {
   useEffect(() => {
     if (!metronomePlaying) {
       clearMetronome()
+      metronomeWasPlayingRef.current = false
       return undefined
     }
 
-    void startMetronome()
+    const fireImmediately = !metronomeWasPlayingRef.current
+    metronomeWasPlayingRef.current = true
+    void startMetronome(fireImmediately)
 
     return () => {
       clearMetronome()
@@ -482,16 +485,16 @@ function App() {
             />
           </label>
           <label>
-            Time signature
+            Bar length
             <select value={beatsPerBar} onChange={(event) => setBeatsPerBar(Number(event.target.value))}>
               {Array.from({ length: 11 }, (_, index) => index + 2).map((beats) => (
                 <option key={beats} value={beats}>
-                  {beats}/4
+                  {beats} beats
                 </option>
               ))}
             </select>
           </label>
-          <p className="hint">The first beat is accented once per bar, from 2/4 up to 12/4.</p>
+          <p className="hint">Sets how many beats pass before the accent repeats, from 2 to 12.</p>
         </article>
 
         <article className="panel">
@@ -701,6 +704,46 @@ function createHarmonicWave(context, harmonics) {
   }
 
   return context.createPeriodicWave(real, imag)
+}
+
+function getReferenceToneProfile(item, instrument) {
+  if (instrument === 'bass') {
+    if (item.note === 'E1') {
+      return {
+        harmonics: [0, 1, 0.62, 0.34, 0.2, 0.12, 0.08, 0.04],
+        filterFrequency: 2100,
+        filterQ: 0.6,
+        filterGain: 0.9,
+        outputGain: 0.095,
+      }
+    }
+
+    return {
+      harmonics: [0, 1, 0.55, 0.26, 0.13, 0.08, 0.04],
+      filterFrequency: 1700,
+      filterQ: 0.7,
+      filterGain: 0.92,
+      outputGain: 0.088,
+    }
+  }
+
+  if (item.note === 'E4') {
+    return {
+      harmonics: [0, 1, 0.38, 0.16, 0.08, 0.03],
+      filterFrequency: 1550,
+      filterQ: 0.75,
+      filterGain: 0.78,
+      outputGain: 0.078,
+    }
+  }
+
+  return {
+    harmonics: [0, 1, 0.52, 0.24, 0.11, 0.06, 0.03],
+    filterFrequency: 1900,
+    filterQ: 0.72,
+    filterGain: 0.82,
+    outputGain: 0.082,
+  }
 }
 
 function playMetronomeClick(context, volume, accented) {
