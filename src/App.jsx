@@ -29,6 +29,10 @@ function App() {
   const metronomeIntervalRef = useRef(null)
   const beatRef = useRef(0)
   const metronomeWasPlayingRef = useRef(false)
+  const metronomePlayingRef = useRef(metronomePlaying)
+  const metronomeBpmRef = useRef(metronomeBpm)
+  const metronomeVolumeRef = useRef(metronomeVolume)
+  const beatsPerBarRef = useRef(beatsPerBar)
 
   const [tapTimes, setTapTimes] = useState([])
 
@@ -85,7 +89,7 @@ function App() {
 
   function clearMetronome() {
     if (metronomeIntervalRef.current) {
-      window.clearInterval(metronomeIntervalRef.current)
+      window.clearTimeout(metronomeIntervalRef.current)
       metronomeIntervalRef.current = null
     }
   }
@@ -99,16 +103,33 @@ function App() {
 
     if (fireImmediately) {
       beatRef.current = 0
-      playMetronomeClick(context, metronomeVolume, true)
+      playMetronomeClick(context, metronomeVolumeRef.current, true)
     }
-    const intervalMs = 60000 / metronomeBpm
+    const queueNextBeat = () => {
+      const intervalMs = 60000 / metronomeBpmRef.current
 
-    metronomeIntervalRef.current = window.setInterval(() => {
+      metronomeIntervalRef.current = window.setTimeout(() => {
+        metronomeIntervalRef.current = null
+        if (!metronomePlayingRef.current) {
+          return
+        }
+
+        beatRef.current += 1
+        const currentBeat = (beatRef.current % beatsPerBarRef.current) + 1
+        const accented = currentBeat === 1
+        playMetronomeClick(context, metronomeVolumeRef.current, accented)
+        queueNextBeat()
+      }, intervalMs)
+    }
+
+    if (!fireImmediately) {
       beatRef.current += 1
-      const currentBeat = (beatRef.current % beatsPerBar) + 1
+      const currentBeat = (beatRef.current % beatsPerBarRef.current) + 1
       const accented = currentBeat === 1
-      playMetronomeClick(context, metronomeVolume, accented)
-    }, intervalMs)
+      playMetronomeClick(context, metronomeVolumeRef.current, accented)
+    }
+
+    queueNextBeat()
   })
 
   function handleTap() {
@@ -379,6 +400,22 @@ function App() {
   }
 
   useEffect(() => {
+    metronomePlayingRef.current = metronomePlaying
+  }, [metronomePlaying])
+
+  useEffect(() => {
+    metronomeBpmRef.current = metronomeBpm
+  }, [metronomeBpm])
+
+  useEffect(() => {
+    metronomeVolumeRef.current = metronomeVolume
+  }, [metronomeVolume])
+
+  useEffect(() => {
+    beatsPerBarRef.current = beatsPerBar
+  }, [beatsPerBar])
+
+  useEffect(() => {
     if (!metronomePlaying) {
       clearMetronome()
       metronomeWasPlayingRef.current = false
@@ -392,7 +429,7 @@ function App() {
     return () => {
       clearMetronome()
     }
-  }, [metronomePlaying, metronomeBpm, metronomeVolume, beatsPerBar])
+  }, [metronomePlaying])
 
   useEffect(() => {
     return () => {
