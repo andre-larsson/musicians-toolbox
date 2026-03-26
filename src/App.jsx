@@ -23,6 +23,7 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 function App() {
   const [metronomeBpm, setMetronomeBpm] = useState(120)
   const [metronomeVolume, setMetronomeVolume] = useState(0.18)
+  const [accentBeat, setAccentBeat] = useState(1)
   const [metronomePlaying, setMetronomePlaying] = useState(false)
   const metronomeContextRef = useRef(null)
   const metronomeIntervalRef = useRef(null)
@@ -30,7 +31,8 @@ function App() {
 
   const [tapTimes, setTapTimes] = useState([])
 
-  const [instrument, setInstrument] = useState('guitar')
+  const [instrument, setInstrument] = useState('bass')
+  const [tunerMode, setTunerMode] = useState('mic')
   const [tunerActive, setTunerActive] = useState(false)
   const [tunerState, setTunerState] = useState({
     status: 'Idle',
@@ -43,6 +45,8 @@ function App() {
   const analyserRef = useRef(null)
   const mediaStreamRef = useRef(null)
   const tunerFrameRef = useRef(null)
+  const tunerToneNodesRef = useRef(null)
+  const [earReference, setEarReference] = useState(null)
 
   const [speakerPlaying, setSpeakerPlaying] = useState(false)
   const [speakerFrequency, setSpeakerFrequency] = useState(440)
@@ -54,28 +58,28 @@ function App() {
 
   const targetStrings = STRING_SETS[instrument]
 
-  const tapBpm = useMemo(() => {
-    if (tapTimes.length < 2) {
-      return null
-    }
-
-    const intervals = []
-    for (let index = 1; index < tapTimes.length; index += 1) {
-      intervals.push(tapTimes[index] - tapTimes[index - 1])
-    }
-
-    const averageInterval = intervals.reduce((sum, value) => sum + value, 0) / intervals.length
-    return Math.round(60000 / averageInterval)
-  }, [tapTimes])
+  const tapBpm = useMemo(() => getTapBpm(tapTimes), [tapTimes])
 
   const speakerWarning = useMemo(() => {
     if (speakerFrequency < 40) {
-      return 'Very low frequencies can stress speakers even when they are barely audible. Start at low volume.'
+      return {
+        level: 'danger',
+        title: 'Low-frequency warning',
+        text: 'Very low frequencies can stress speakers even when they are barely audible. Start at very low volume.',
+      }
     }
     if (speakerFrequency > 12000) {
-      return 'Very high frequencies may be hard to hear but can still be uncomfortable or harmful to young ears and animals.'
+      return {
+        level: 'danger',
+        title: 'High-frequency warning',
+        text: 'Very high frequencies may be hard to hear but can still be uncomfortable or harmful to young ears and animals.',
+      }
     }
-    return 'Keep volume low while testing channels and sweep frequencies slowly.'
+    return {
+      level: 'notice',
+      title: 'Level check',
+      text: 'Keep volume low while testing channels and sweep frequencies slowly.',
+    }
   }, [speakerFrequency])
 
   function clearMetronome() {
@@ -93,12 +97,13 @@ function App() {
     await context.resume()
 
     beatRef.current = 0
-    playMetronomeClick(context, metronomeVolume, true)
+    playMetronomeClick(context, metronomeVolume, accentBeat === 1)
     const intervalMs = 60000 / metronomeBpm
 
     metronomeIntervalRef.current = window.setInterval(() => {
       beatRef.current += 1
-      const accented = beatRef.current % 4 === 0
+      const currentBeat = (beatRef.current % 4) + 1
+      const accented = currentBeat === accentBeat
       playMetronomeClick(context, metronomeVolume, accented)
     }, intervalMs)
   })
@@ -112,19 +117,17 @@ function App() {
       if (next.length === 1) {
         setMetronomeBpm(120)
       } else {
-        const intervals = []
-        for (let index = 1; index < next.length; index += 1) {
-          intervals.push(next[index] - next[index - 1])
-        }
-
-        const averageInterval = intervals.reduce((sum, value) => sum + value, 0) / intervals.length
-        setMetronomeBpm(Math.round(60000 / averageInterval))
+        setMetronomeBpm(getTapBpm(next))
       }
       return next
     })
   }
 
   async function toggleTuner() {
+    if (tunerMode !== 'mic') {
+      return
+    }
+
     if (tunerActive) {
       stopTuner()
       return
@@ -218,6 +221,93 @@ function App() {
 
     analyserRef.current = null
     setTunerActive(false)
+    setTunerState({
+      status: tunerMode === 'mic' ? 'Mic stopped' : 'Reference tone stopped',
+      frequency: null,
+      note: null,
+      cents: null,
+      clarity: null,
+    })
+  }
+
+  async function toggleEarReference(item) {
+    if (tunerMode !== 'tone') {
+      return
+    }
+
+    if (earReference?.note === item.note) {
+      stopEarReference()
+      return
+    }
+
+    stopEarReference()
+
+    try {
+      const context = tunerContextRef.current ?? new AudioContext()
+      tunerContextRef.current = context
+      await context.resume()
+
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      oscillator.type = 'sine'
+      oscillator.frequency.value = item.frequency
+      gain.gain.value = 0.07
+
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start()
+
+      tunerToneNodesRef.current = { oscillator, gain }
+      setEarReference(item)
+      setTunerState({
+        status: 'Reference tone playing',
+        frequency: item.frequency,
+        note: item.note,
+        cents: 0,
+        clarity: null,
+      })
+    } catch {
+      setTunerState({
+        status: 'Could not start the reference tone in this browser.',
+        frequency: null,
+        note: null,
+        cents: null,
+        clarity: null,
+      })
+    }
+  }
+
+  function stopEarReference() {
+    if (tunerToneNodesRef.current) {
+      tunerToneNodesRef.current.oscillator.stop()
+      tunerToneNodesRef.current.oscillator.disconnect()
+      tunerToneNodesRef.current.gain.disconnect()
+      tunerToneNodesRef.current = null
+    }
+
+    setEarReference(null)
+    if (tunerMode === 'tone') {
+      setTunerState({
+        status: 'Reference tone stopped',
+        frequency: null,
+        note: null,
+        cents: null,
+        clarity: null,
+      })
+    }
+  }
+
+  function handleTunerModeChange(nextMode) {
+    stopTuner()
+    stopEarReference()
+    setTunerMode(nextMode)
+    setTunerState({
+      status: nextMode === 'mic' ? 'Mic ready' : 'Select a string to hear a reference tone',
+      frequency: null,
+      note: null,
+      cents: null,
+      clarity: null,
+    })
   }
 
   async function toggleSpeaker() {
@@ -269,6 +359,7 @@ function App() {
     }
 
     setSpeakerPlaying(false)
+    setSpeakerStatus('')
   }
 
   useEffect(() => {
@@ -282,13 +373,28 @@ function App() {
     return () => {
       clearMetronome()
     }
-  }, [metronomePlaying, metronomeBpm, metronomeVolume])
+  }, [metronomePlaying, metronomeBpm, metronomeVolume, accentBeat])
 
   useEffect(() => {
     return () => {
       clearMetronome()
-      stopTuner()
-      stopSpeaker()
+      if (tunerFrameRef.current) {
+        window.cancelAnimationFrame(tunerFrameRef.current)
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop())
+      }
+      if (tunerToneNodesRef.current) {
+        tunerToneNodesRef.current.oscillator.stop()
+        tunerToneNodesRef.current.oscillator.disconnect()
+        tunerToneNodesRef.current.gain.disconnect()
+      }
+      if (speakerNodesRef.current) {
+        speakerNodesRef.current.oscillator.stop()
+        speakerNodesRef.current.oscillator.disconnect()
+        speakerNodesRef.current.gain.disconnect()
+        speakerNodesRef.current.panner?.disconnect()
+      }
     }
   }, [])
 
@@ -357,7 +463,16 @@ function App() {
               onChange={(event) => setMetronomeVolume(Number(event.target.value))}
             />
           </label>
-          <p className="hint">Accents every fourth beat.</p>
+          <label>
+            Accent beat
+            <select value={accentBeat} onChange={(event) => setAccentBeat(Number(event.target.value))}>
+              <option value="1">Beat 1</option>
+              <option value="2">Beat 2</option>
+              <option value="3">Beat 3</option>
+              <option value="4">Beat 4</option>
+            </select>
+          </label>
+          <p className="hint">Accent any beat in the four-beat cycle.</p>
         </article>
 
         <article className="panel">
@@ -382,8 +497,30 @@ function App() {
               <p className="kicker">Online Tuner</p>
               <h2>{instrument === 'guitar' ? 'Guitar' : 'Bass'}</h2>
             </div>
-            <button className="primary" type="button" onClick={toggleTuner}>
-              {tunerActive ? 'Stop mic' : 'Start mic'}
+            {tunerMode === 'mic' ? (
+              <button className="primary" type="button" onClick={toggleTuner}>
+                {tunerActive ? 'Stop mic' : 'Start mic'}
+              </button>
+            ) : (
+              <button className="primary" type="button" onClick={stopEarReference}>
+                Stop tone
+              </button>
+            )}
+          </div>
+          <div className="segmented segmented-two">
+            <button
+              className={tunerMode === 'mic' ? 'segment active' : 'segment'}
+              type="button"
+              onClick={() => handleTunerModeChange('mic')}
+            >
+              Mic
+            </button>
+            <button
+              className={tunerMode === 'tone' ? 'segment active' : 'segment'}
+              type="button"
+              onClick={() => handleTunerModeChange('tone')}
+            >
+              By ear
             </button>
           </div>
           <div className="segmented">
@@ -411,15 +548,24 @@ function App() {
               </span>
             </div>
             <p className="frequency">
-              {tunerState.frequency ? `${tunerState.frequency.toFixed(2)} Hz` : 'Play one note at a time near the microphone.'}
+              {tunerState.frequency
+                ? `${tunerState.frequency.toFixed(2)} Hz`
+                : tunerMode === 'mic'
+                  ? 'Play one note at a time near the microphone.'
+                  : 'Tap a string below to hear a clean reference tone.'}
             </p>
           </div>
           <div className="string-grid">
             {targetStrings.map((item) => (
-              <div key={item.note} className="string-card">
+              <button
+                key={item.note}
+                className={earReference?.note === item.note ? 'string-card string-card-active' : 'string-card'}
+                type="button"
+                onClick={() => void toggleEarReference(item)}
+              >
                 <strong>{item.note}</strong>
                 <span>{item.frequency.toFixed(2)} Hz</span>
-              </div>
+              </button>
             ))}
           </div>
         </article>
@@ -439,7 +585,7 @@ function App() {
             <input
               type="range"
               min="20"
-              max="20000"
+              max="16000"
               step="1"
               value={speakerFrequency}
               onChange={(event) => setSpeakerFrequency(Number(event.target.value))}
@@ -448,7 +594,7 @@ function App() {
           <div className="triple-stats">
             <span>20 Hz</span>
             <span>1 kHz</span>
-            <span>20 kHz</span>
+            <span>16 kHz</span>
           </div>
           <label>
             Output level
@@ -484,12 +630,29 @@ function App() {
               Right
             </button>
           </div>
-          <p className="warning-box">{speakerWarning}</p>
+          <div className={`warning-box warning-box-${speakerWarning.level}`}>
+            <strong>{speakerWarning.title}</strong>
+            <p>{speakerWarning.text}</p>
+          </div>
           {speakerStatus ? <p className="hint">{speakerStatus}</p> : null}
         </article>
       </section>
     </main>
   )
+}
+
+function getTapBpm(tapTimes) {
+  if (tapTimes.length < 2) {
+    return null
+  }
+
+  const intervals = []
+  for (let index = 1; index < tapTimes.length; index += 1) {
+    intervals.push(tapTimes[index] - tapTimes[index - 1])
+  }
+
+  const averageInterval = intervals.reduce((sum, value) => sum + value, 0) / intervals.length
+  return Math.round(60000 / averageInterval)
 }
 
 function playMetronomeClick(context, volume, accented) {
