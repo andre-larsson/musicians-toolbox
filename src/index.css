@@ -4,8 +4,8 @@
   font-family: Tahoma, Verdana, 'Trebuchet MS', sans-serif;
   line-height: 1.45;
   font-weight: 400;
-  color: #24103f;
-  background: #ffc7e4;
+  color: #1d2f43;
+  background: #b9d7ef;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -26,12 +26,12 @@ body {
   padding: 1rem;
   background:
     radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.55), transparent 18%),
-    radial-gradient(circle at 76% 12%, rgba(255, 250, 188, 0.8), transparent 14%),
+    radial-gradient(circle at 76% 12%, rgba(255, 233, 165, 0.8), transparent 14%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.28) 25%, transparent 25%) 0 0 / 26px 26px,
     linear-gradient(225deg, rgba(255, 255, 255, 0.18) 25%, transparent 25%) 0 0 / 26px 26px,
     linear-gradient(315deg, rgba(255, 255, 255, 0.28) 25%, transparent 25%) 13px 13px / 26px 26px,
     linear-gradient(45deg, rgba(255, 255, 255, 0.18) 25%, transparent 25%) 13px 13px / 26px 26px,
-    linear-gradient(180deg, #ff9dc7 0%, #ffaee8 48%, #9ecfff 100%);
+    linear-gradient(180deg, #8eb8dc 0%, #b7d2e8 45%, #d6e0ba 100%);
 }
 
 body::before {
@@ -52,7 +52,7 @@ body::after {
   inset: 0;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.26), transparent 140px),
-    linear-gradient(0deg, rgba(131, 21, 103, 0.12), transparent 200px);
+    linear-gradient(0deg, rgba(24, 58, 93, 0.14), transparent 200px);
   pointer-events: none;
 }
 
