@@ -23,7 +23,7 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 function App() {
   const [metronomeBpm, setMetronomeBpm] = useState(120)
   const [metronomeVolume, setMetronomeVolume] = useState(0.18)
-  const [accentBeat, setAccentBeat] = useState(1)
+  const [beatsPerBar, setBeatsPerBar] = useState(4)
   const [metronomePlaying, setMetronomePlaying] = useState(false)
   const metronomeContextRef = useRef(null)
   const metronomeIntervalRef = useRef(null)
@@ -32,10 +32,10 @@ function App() {
   const [tapTimes, setTapTimes] = useState([])
 
   const [instrument, setInstrument] = useState('bass')
-  const [tunerMode, setTunerMode] = useState('mic')
+  const [tunerMode, setTunerMode] = useState('tone')
   const [tunerActive, setTunerActive] = useState(false)
   const [tunerState, setTunerState] = useState({
-    status: 'Idle',
+    status: 'Select a string to hear a reference tone',
     frequency: null,
     note: null,
     cents: null,
@@ -97,13 +97,13 @@ function App() {
     await context.resume()
 
     beatRef.current = 0
-    playMetronomeClick(context, metronomeVolume, accentBeat === 1)
+    playMetronomeClick(context, metronomeVolume, true)
     const intervalMs = 60000 / metronomeBpm
 
     metronomeIntervalRef.current = window.setInterval(() => {
       beatRef.current += 1
-      const currentBeat = (beatRef.current % 4) + 1
-      const accented = currentBeat === accentBeat
+      const currentBeat = (beatRef.current % beatsPerBar) + 1
+      const accented = currentBeat === 1
       playMetronomeClick(context, metronomeVolume, accented)
     }, intervalMs)
   })
@@ -249,15 +249,29 @@ function App() {
 
       const oscillator = context.createOscillator()
       const gain = context.createGain()
-      oscillator.type = 'sine'
-      oscillator.frequency.value = item.frequency
-      gain.gain.value = 0.07
+      const filter = context.createBiquadFilter()
+      const output = context.createGain()
+      const instrumentHarmonics =
+        instrument === 'bass'
+          ? [0, 1, 0.48, 0.2, 0.1, 0.06, 0.03]
+          : [0, 1, 0.62, 0.31, 0.16, 0.09, 0.05]
 
-      oscillator.connect(gain)
-      gain.connect(context.destination)
+      oscillator.setPeriodicWave(createHarmonicWave(context, instrumentHarmonics))
+      oscillator.frequency.value = item.frequency
+      filter.type = 'lowpass'
+      filter.frequency.value = instrument === 'bass' ? 1400 : 2200
+      filter.Q.value = 0.8
+      gain.gain.value = instrument === 'bass' ? 0.95 : 0.8
+      output.gain.setValueAtTime(0.0001, context.currentTime)
+      output.gain.exponentialRampToValueAtTime(0.085, context.currentTime + 0.04)
+
+      oscillator.connect(filter)
+      filter.connect(gain)
+      gain.connect(output)
+      output.connect(context.destination)
       oscillator.start()
 
-      tunerToneNodesRef.current = { oscillator, gain }
+      tunerToneNodesRef.current = { oscillator, gain, filter, output }
       setEarReference(item)
       setTunerState({
         status: 'Reference tone playing',
@@ -282,6 +296,8 @@ function App() {
       tunerToneNodesRef.current.oscillator.stop()
       tunerToneNodesRef.current.oscillator.disconnect()
       tunerToneNodesRef.current.gain.disconnect()
+      tunerToneNodesRef.current.filter?.disconnect()
+      tunerToneNodesRef.current.output?.disconnect()
       tunerToneNodesRef.current = null
     }
 
@@ -373,7 +389,7 @@ function App() {
     return () => {
       clearMetronome()
     }
-  }, [metronomePlaying, metronomeBpm, metronomeVolume, accentBeat])
+  }, [metronomePlaying, metronomeBpm, metronomeVolume, beatsPerBar])
 
   useEffect(() => {
     return () => {
@@ -388,6 +404,8 @@ function App() {
         tunerToneNodesRef.current.oscillator.stop()
         tunerToneNodesRef.current.oscillator.disconnect()
         tunerToneNodesRef.current.gain.disconnect()
+        tunerToneNodesRef.current.filter?.disconnect()
+        tunerToneNodesRef.current.output?.disconnect()
       }
       if (speakerNodesRef.current) {
         speakerNodesRef.current.oscillator.stop()
@@ -418,8 +436,8 @@ function App() {
           <p className="eyebrow">Music Toolbox</p>
           <h1>Practice, tune, and test your setup from one page.</h1>
           <p className="lede">
-            Metronome, tap tempo, tuner for guitar and bass, plus a speaker check that
-            sweeps from 20 Hz to 20,000 Hz.
+            Metronome, tap tempo, tuner for guitar and bass, plus a speaker check for
+            channel testing and frequency checks.
           </p>
         </div>
         <div className="hero-warning">
@@ -464,15 +482,16 @@ function App() {
             />
           </label>
           <label>
-            Accent beat
-            <select value={accentBeat} onChange={(event) => setAccentBeat(Number(event.target.value))}>
-              <option value="1">Beat 1</option>
-              <option value="2">Beat 2</option>
-              <option value="3">Beat 3</option>
-              <option value="4">Beat 4</option>
+            Time signature
+            <select value={beatsPerBar} onChange={(event) => setBeatsPerBar(Number(event.target.value))}>
+              {Array.from({ length: 11 }, (_, index) => index + 2).map((beats) => (
+                <option key={beats} value={beats}>
+                  {beats}/4
+                </option>
+              ))}
             </select>
           </label>
-          <p className="hint">Accent any beat in the four-beat cycle.</p>
+          <p className="hint">The first beat is accented once per bar, from 2/4 up to 12/4.</p>
         </article>
 
         <article className="panel">
@@ -552,7 +571,7 @@ function App() {
                 ? `${tunerState.frequency.toFixed(2)} Hz`
                 : tunerMode === 'mic'
                   ? 'Play one note at a time near the microphone.'
-                  : 'Tap a string below to hear a clean reference tone.'}
+                  : 'Tap a string below to hear a richer instrument-style reference tone.'}
             </p>
           </div>
           <div className="string-grid">
@@ -589,6 +608,24 @@ function App() {
               step="1"
               value={speakerFrequency}
               onChange={(event) => setSpeakerFrequency(Number(event.target.value))}
+            />
+          </label>
+          <label>
+            Manual Hz input
+            <input
+              className="number-input"
+              type="number"
+              min="20"
+              max="16000"
+              step="1"
+              value={speakerFrequency}
+              onChange={(event) => {
+                const nextValue = Number(event.target.value)
+                if (Number.isNaN(nextValue)) {
+                  return
+                }
+                setSpeakerFrequency(Math.min(16000, Math.max(20, nextValue)))
+              }}
             />
           </label>
           <div className="triple-stats">
@@ -653,6 +690,17 @@ function getTapBpm(tapTimes) {
 
   const averageInterval = intervals.reduce((sum, value) => sum + value, 0) / intervals.length
   return Math.round(60000 / averageInterval)
+}
+
+function createHarmonicWave(context, harmonics) {
+  const real = new Float32Array(harmonics.length)
+  const imag = new Float32Array(harmonics.length)
+
+  for (let index = 1; index < harmonics.length; index += 1) {
+    imag[index] = harmonics[index]
+  }
+
+  return context.createPeriodicWave(real, imag)
 }
 
 function playMetronomeClick(context, volume, accented) {
